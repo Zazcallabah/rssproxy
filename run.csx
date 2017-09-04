@@ -6,6 +6,25 @@ using System.Threading.Tasks;
 using System.Text.RegularExpressions;
 using System.Text;
 
+public class HpfRss : Rss
+{
+	public HpfRss( string id ) : base(id){}
+	public override string GetUrl()
+	{
+		return $"https://www.hpfanficarchive.com/stories/viewstory.php?sid={Id}&index=1";
+	}
+	
+	public override string GetItemCount(string data)
+	{
+		return RegexExtract("<span class=\"label\">Chapters: </span>\\s*(\\d+)\\s", data) ?? "-1";
+	}
+	
+	public override string GetTitle(string data)
+	{
+		return RegexExtract("<title>([^<]*)</title>", data);
+	}
+}
+
 public class FfnRss : Rss
 {
 	public FfnRss(string id) : base(id) { }
@@ -161,7 +180,19 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, TraceW
 
 	var type = req.GetQueryNameValuePairs().FirstOrDefault(q => string.Compare(q.Key, "type", true) == 0).Value;
 
-	Rss rssobj = type == "ffn" ? (Rss)new FfnRss(id) : (Rss)new Ao3Rss(id);
+	Rss rssobj = null;
+	if(type == "ffn")
+	{
+		rssobj = new FfnRss(id);
+	}
+	else if( type == "hpf" )
+	{
+		rssobj = new HpfRss(id);
+	}
+	else
+	{
+		rssobj = new Ao3Rss(id);
+	}
 	var rssstr = await rssobj.Build();
 
 	return req.CreateResponse(HttpStatusCode.OK, rssstr, "text/plain");
