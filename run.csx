@@ -90,6 +90,8 @@ public abstract class Rss
 	{
 		var url = GetUrl();
 		var data = await Get(url);
+		if( data == null )
+			return null;
 		var title = GetTitle(data);
 		var items = GetItems(data);
 		return MakeRss(title, url, items);
@@ -97,11 +99,18 @@ public abstract class Rss
 
 	public async Task<string> Get(string url)
 	{
+		try
+		{
 		var request = WebRequest.Create(url);
 		using (var response = await request.GetResponseAsync())
 		using (var reader = new StreamReader(response.GetResponseStream()))
 		{
 			return reader.ReadToEnd();
+		}
+		}
+		catch(WebException)
+		{
+			return null;
 		}
 	}
 
@@ -166,10 +175,6 @@ public class Item
 	public string Id { get; set; }
 }
 
-
-
-
-
 public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, TraceWriter log)
 {
 	var id = req.GetQueryNameValuePairs().FirstOrDefault(q => string.Compare(q.Key, "id", true) == 0).Value;
@@ -193,8 +198,18 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, TraceW
 	{
 		rssobj = new Ao3Rss(id);
 	}
-	var rssstr = await rssobj.Build();
 
-	return req.CreateResponse(HttpStatusCode.OK, rssstr, "text/plain");
+	try
+	{
+		var rssstr = await rssobj.Build();
 
+		if( rssstr == null )
+			return req.CreateResponse(HttpStatusCode.NotFound);
+
+		return req.CreateResponse(HttpStatusCode.OK, rssstr, "text/plain");
+	}
+	catch( Exception e )
+	{
+			return req.CreateResponse(HttpStatusCode.BadRequest, e.ToString(), "text/plain");
+	}
 }
