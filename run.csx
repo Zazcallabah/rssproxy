@@ -67,14 +67,16 @@ public class Ao3AuthorRss : Rss
 		Url = $"http://archiveofourown.org/users/{Id}/pseuds/{Id}/works";
 	}
 
-	protected override IEnumerable<string> GetItemNames(string data)
-	{
-		return RegexExtractAll( "<h4 class=\"heading\">\\s*<a href=\"[^\"]+\">([^<]+)</a>", data );
-	}
-
 	protected override List<Item> GetItems(string data)
 	{
-		return ExtractBasicChapterList( data );
+		var list = new List<Item>();
+		var itemnames = RegexExtractAll( "<h4 class=\"heading\">\\s*<a href=\"[^\"]+\">([^<]+)</a>", data ).ToArray();
+		var chapterdata = RegexExtractAll( "<dd class=\"chapters\">([^<]*)</dd>", data ).ToArray();
+		for( var i = 0; i < itemnames.Length && i < chapterdata.Length && i < 100; i++ )
+		{
+			list.Add(new Item { Title = itemnames[i], Id = chapterdata[i] });           
+		}
+		return list;
 	}
 
 	protected override string GetTitle(string data)
