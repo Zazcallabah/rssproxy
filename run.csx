@@ -8,52 +8,35 @@ using System.Text;
 
 public class HpfRss : Rss
 {
-	public HpfRss( string id ) : base(id){}
-	public override string GetUrl()
+	public HpfRss( string id, TraceWriter log ) : base(log)
 	{
-		return $"https://www.hpfanficarchive.com/stories/viewstory.php?sid={Id}&index=1";
-	}
-	public override IEnumerable<string> GetItemNames(string data)
-	{
-		return GenerateChapterNames(RegexExtract("<span class=\"label\">Chapters: </span>\\s*(\\d+)\\s", data) ?? "-1");
-	}
-	
-	public override string GetTitle(string data)
-	{
-		return RegexExtract("<title>([^<]*)</title>", data);
+		Id = id;
+		Url = $"http://www.hpfanficarchive.com/stories/viewstory.php?sid={Id}&index=1";
+		TitleRegex = "<title>([^<]*)</title>";
+		ItemsRegex = "<span class=\"label\">Chapters: </span>\\s*(\\d+)\\s";
 	}
 }
 
 public class FfnRss : Rss
 {
-	public FfnRss(string id) : base(id) { }
-
-	public override string GetUrl()
+	public FfnRss( string id, TraceWriter log ) : base(log)
 	{
-		return $"https://www.fanfiction.net/s/{Id}/1/";
-	}
-
-	public override IEnumerable<string> GetItemNames(string data)
-	{
-		return GenerateChapterNames(RegexExtract("Chapters: (\\d+)\\s", data) ?? "-1");
-	}
-
-	public override string GetTitle(string data)
-	{
-		return RegexExtract("<title>([^<]*)</title>", data);
+		Id = id;
+		Url = $"https://www.fanfiction.net/s/{Id}/1/";
+		TitleRegex = "<title>([^<]*)</title>";
+		ItemsRegex = "Chapters: (\\d+)\\s";
 	}
 }
 
 public class Ao3Rss : Rss
 {
-	public Ao3Rss(string id) : base(id) { }
-
-	public override string GetUrl()
+	public Ao3Rss(string id, TraceWriter log) : base(log)
 	{
-		return $"http://archiveofourown.org/works/{Id}/chapters/";
+		Id = id;
+		Url = $"http://archiveofourown.org/works/{Id}/chapters/";
 	}
 
-	public override IEnumerable<string> GetItemNames(string data)
+	protected override IEnumerable<string> GetItemNames(string data)
 	{
 		if (data.Contains("<dd class=\"chapters\">"))
 		{
@@ -62,7 +45,7 @@ public class Ao3Rss : Rss
 		return new []{ "Chapter 1" };
 	}
 
-	public override string GetTitle(string data)
+	protected override string GetTitle(string data)
 	{
 		if (data.Contains("<h2 class=\"title heading\">"))
 		{
@@ -78,19 +61,23 @@ public class Ao3Rss : Rss
 
 public class Ao3AuthorRss : Rss
 {
-	public Ao3AuthorRss(string id) : base(id) { }
-
-	public override string GetUrl()
+	public Ao3AuthorRss(string id, TraceWriter log) : base(log)
 	{
-		return $"http://archiveofourown.org/users/{Id}/pseuds/{Id}/works";
+		Id = id;
+		Url = $"http://archiveofourown.org/users/{Id}/pseuds/{Id}/works";
 	}
 
-	public override IEnumerable<string> GetItemNames(string data)
+	protected override IEnumerable<string> GetItemNames(string data)
 	{
 		return RegexExtractAll( "<h4 class=\"heading\">\\s*<a href=\"[^\"]+\">([^<]+)</a>", data );
 	}
 
-	public override string GetTitle(string data)
+	protected override List<Item> GetItems(string data)
+	{
+		return ExtractBasicChapterList( data );
+	}
+
+	protected override string GetTitle(string data)
 	{
 		return $"{Id} updates";
 	}
@@ -99,77 +86,93 @@ public class Ao3AuthorRss : Rss
 public abstract class Rss
 {
 	protected string Id { get; set; }
+	protected string Url { get; set; }
+	protected string TitleRegex { get; set; }
+	protected string ItemsRegex { get; set; }
+	
+	protected TraceWriter _log;
 
-	protected Rss(string id)
+	protected Rss( TraceWriter log )
 	{
-		Id = id;
+		_log = log;
 	}
 
 	public async Task<string> Build()
 	{
-		var url = GetUrl();
-		var data = await Get(url);
+		var data = await Get();
 		if( data == null )
 			return null;
 		var title = GetTitle(data);
 		var items = GetItems(data);
-		return MakeRss(title, url, items);
+		return MakeRss(title, items);
 	}
 
-	public async Task<string> Get(string url)
+	public async Task<string> Get()
 	{
 		try
 		{
-		var request = WebRequest.Create(url);
-		using (var response = await request.GetResponseAsync())
-		using (var reader = new StreamReader(response.GetResponseStream()))
-		{
-			return reader.ReadToEnd();
+			var request = WebRequest.Create(Url);
+			using (var response = await request.GetResponseAsync())
+			using (var reader = new StreamReader(response.GetResponseStream()))
+			{
+				return reader.ReadToEnd();
+			}
 		}
-		}
-		catch(WebException)
+		catch(WebException we)
 		{
+			_log.Error(we.ToString());
 			return null;
 		}
 	}
 
-	public abstract string GetUrl();
-	public abstract string GetTitle(string data);
-	public abstract IEnumerable<string> GetItemNames(string data);
+	protected virtual IEnumerable<string> GetItemNames(string data)
+	{
+		return GenerateChapterNames( RegexExtract(ItemsRegex, data) ?? "-1" );
+	}
 
 	protected virtual List<Item> GetItems(string data)
+	{
+		return ExtractBasicChapterList( data );
+	}
+	
+	protected virtual string GetTitle(string data)
+	{
+		return RegexExtract(TitleRegex, data);
+	}
+
+	protected List<Item> ExtractBasicChapterList(string data)
 	{
 		var list = new List<Item>();
 		var itemnames = GetItemNames(data).ToArray();
 		var count = 1;
-        var countdown = itemnames.Length;
+		var countdown = itemnames.Length;
 
-        foreach( var name in itemnames )
-        {
+		foreach( var name in itemnames )
+		{
 			list.Add(new Item { Title = name, Id = countdown.ToString() });           
-            count++;
-            countdown--;
-            if( count > 100 )
-                break;
-        }
+			count++;
+			countdown--;
+			if( count > 100 )
+				break;
+		}
 		return list;
 	}
 
-    protected static IEnumerable<string> GenerateChapterNames(string count)
-    {
+	protected static IEnumerable<string> GenerateChapterNames(string count)
+	{
 		int c = -1;
 		if (!Int32.TryParse(count, out c) || c < 0)
-            return new string[0];
+			return new string[0];
 
-        var names = new string[c];
+		var names = new string[c];
 		var length = 0;
-        for (var i = c; i >= 1 && length < 100; i--)
-        {
-            names[length] = $"Chapter {i}";
-            length++;
-        }
+		for (var i = c; i >= 1 && length < 100; i--)
+		{
+			names[length] = $"Chapter {i}";
+			length++;
+		}
 		return names;
-    }
+	}
 
 	protected static string RegexExtract(string regex, string data)
 	{
@@ -186,17 +189,17 @@ public abstract class Rss
 	{
 		var r = new Regex(regex, RegexOptions.Multiline);
 		MatchCollection selected = r.Matches(data);
-        var values = new List<string>();
-        foreach (Match match in selected)
-        {
-            GroupCollection groups = match.Groups;
-            if( groups.Count >= 2)
-                values.Add(groups[1].Value.Trim());
-        }
+		var values = new List<string>();
+		foreach (Match match in selected)
+		{
+			GroupCollection groups = match.Groups;
+			if( groups.Count >= 2)
+				values.Add(groups[1].Value.Trim());
+		}
 		return values;
 	}
 
-	string MakeRss(string Title, string Url, List<Item> Items)
+	string MakeRss(string Title, List<Item> Items)
 	{
 		var sb = new StringBuilder();
 		sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
@@ -238,19 +241,19 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, TraceW
 	Rss rssobj = null;
 	if(type == "ffn")
 	{
-		rssobj = new FfnRss(id);
+		rssobj = new FfnRss(id,log);
 	}
 	else if( type == "hpf" )
 	{
-		rssobj = new HpfRss(id);
+		rssobj = new HpfRss(id,log);
 	}
-    else if( type == "ao3a" )
-    {
-        rssobj = new Ao3AuthorRss(id);
-    }
+	else if( type == "ao3a" )
+	{
+		rssobj = new Ao3AuthorRss(id,log);
+	}
 	else
 	{
-		rssobj = new Ao3Rss(id);
+		rssobj = new Ao3Rss(id,log);
 	}
 
 	try
