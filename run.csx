@@ -1,10 +1,133 @@
+#r "Newtonsoft.Json"
+#r "System.Web"
+
 using System.Net;
+using System.Web;
 using System;
 using System.IO;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Text.RegularExpressions;
 using System.Text;
+using Newtonsoft.Json;
+
+
+public class ShareVilleRss : Rss
+{
+	public class Profile
+	{
+		public string backend_uri { get; set; }
+	}
+	
+	public class Feed
+	{
+		public ShareVilleRss.FeedResult[] results { get; set; }
+	}
+	
+	public class FeedResult
+	{
+		public ShareVilleRss.FeedEntry first { get; set; }
+		public long id { get; set; }
+		[JsonProperty("object")]
+		public ShareVilleRss.Transaction transaction { get; set; }
+		public string created_at { get; set; }
+	}
+	
+	public class Transaction
+	{
+		public int side { get; set; }
+		public int transaction_tag { get; set; }
+		public long id { get; set; }
+		public string price { get; set; }
+		public TransactionData instrument { get; set; }
+	}
+	
+	public class TransactionData
+	{
+		public string slug { get; set; }
+		public string instrument_id { get; set; }
+		public string instrument_group_type { get; set; }
+		public long id { get; set; }
+		public string name { get; set; }
+		public string currency { get; set; }
+	}
+	
+	public class FeedEntry
+	{
+		public long id { get; set; }
+		public long group { get; set; }
+		public string comment { get; set; }
+		public FeedProfile profile { get; set; }
+	}
+	
+	public class FeedProfile
+	{
+		public string name { get; set; }
+	}
+	
+	public ShareVilleRss(string id, TraceWriter log) : base(log)
+	{
+		Id = id;
+		Url = $"https://www.shareville.se/api/v1/profiles/{Id}";
+	}
+	
+	static Dictionary<int,string> TagTypes = new Dictionary<int,string>{
+		{0,""},
+		{2,""},
+		{3,"utan särskild tidshorisont"},
+		{4,"för att ta hem vinsten"},
+		{6,"för att lägga pengarna i kassan"}
+	};
+	
+	static string MakeTitle(ShareVilleRss.FeedResult entry)
+	{
+		
+		if( entry?.transaction?.instrument != null )
+		{
+			var act = entry?.transaction?.side == 1 ? "köpte" : "sålde";
+			string tagtype = "";
+			int? tag = entry?.transaction?.transaction_tag;
+			if( tag != null )
+			{
+				if( TagTypes.ContainsKey(tag.Value) )
+					tagtype = TagTypes[tag.Value];
+				else
+					tagtype = tag.Value.ToString();
+			}
+			
+			return $"{entry?.first?.profile?.name} {act} {entry?.transaction?.instrument?.name} @ {entry?.transaction?.price} {entry?.transaction?.instrument?.currency} {tagtype}";
+		}
+		
+		return $"Kommentar från {entry?.first?.profile?.name}";
+	}
+
+	protected override async Task<List<Item>> GetItems(string data)
+	{
+		var profile = JsonConvert.DeserializeObject<ShareVilleRss.Profile>( data );
+		
+		var feedjson = await Get( $"https://www.shareville.se{profile.backend_uri}/stream" );
+		var feed = JsonConvert.DeserializeObject<ShareVilleRss.Feed>( feedjson );
+		var list = new List<Item>();
+		foreach( var result in feed.results )
+		{
+			var title = MakeTitle( result );
+			string comment = "";
+			if(result.first != null )
+				comment = result.first.comment;
+			list.Add( new Item {
+				Title = title,
+				Id = result.id.ToString(),
+				Description = comment
+			});
+		}
+		return list;
+	}
+
+	protected override string GetTitle(string data)
+	{
+		return $"{Id} ShareVille";
+	}
+}
 
 public class HpfRss : Rss
 {
@@ -67,7 +190,7 @@ public class Ao3AuthorRss : Rss
 		Url = $"http://archiveofourown.org/users/{Id}/pseuds/{Id}/works";
 	}
 
-	protected override List<Item> GetItems(string data)
+	protected override async Task<List<Item>> GetItems(string data)
 	{
 		var list = new List<Item>();
 		var itemnames = RegexExtractAll( "<h4 class=\"heading\">\\s*<a href=\"[^\"]+\">([^<]+)</a>", data ).ToArray();
@@ -85,6 +208,7 @@ public class Ao3AuthorRss : Rss
 	}
 }
 
+
 public abstract class Rss
 {
 	protected string Id { get; set; }
@@ -101,19 +225,19 @@ public abstract class Rss
 
 	public async Task<string> Build()
 	{
-		var data = await Get();
+		var data = await Get( Url );
 		if( data == null )
 			return null;
 		var title = GetTitle(data);
-		var items = GetItems(data);
+		var items = await GetItems(data);
 		return MakeRss(title, items);
 	}
 
-	public async Task<string> Get()
+	public async Task<string> Get( string url )
 	{
 		try
 		{
-			var request = WebRequest.Create(Url);
+			var request = WebRequest.Create(url);
 			using (var response = await request.GetResponseAsync())
 			using (var reader = new StreamReader(response.GetResponseStream()))
 			{
@@ -132,7 +256,7 @@ public abstract class Rss
 		return GenerateChapterNames( RegexExtract(ItemsRegex, data) ?? "-1" );
 	}
 
-	protected virtual List<Item> GetItems(string data)
+	protected virtual async Task<List<Item>> GetItems(string data)
 	{
 		return ExtractBasicChapterList( data );
 	}
@@ -201,23 +325,27 @@ public abstract class Rss
 		return values;
 	}
 
-	string MakeRss(string Title, List<Item> Items)
+	string MakeRss(string feedtitle, List<Item> Items)
 	{
+		var titleencoded = System.Web.HttpUtility.HtmlEncode(feedtitle);
 		var sb = new StringBuilder();
 		sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
 		sb.AppendLine("<rss version=\"2.0\">\r\n<channel>");
-		sb.AppendLine($"<title>{Title}</title>");
+		sb.AppendLine($"<title>{titleencoded}</title>");
 		sb.AppendLine($"<link>{Url}</link>");
-		sb.AppendLine($"<description>{Title}</description>");
+		sb.AppendLine($"<description>{titleencoded}</description>");
 		sb.AppendLine("<language>en-us</language>\r\n");
 
 		foreach (var item in Items)
 		{
-			sb.AppendLine($"<item>\r\n<title>{item.Title}</title>");
+			var description = System.Web.HttpUtility.HtmlEncode(item.Description ?? item.Title);
+			var title = System.Web.HttpUtility.HtmlEncode( item.Title );
+
+			sb.AppendLine($"<item>\r\n<title>{title}</title>");
 			sb.AppendLine($"<link>{Url}</link>");
 			sb.AppendLine($"<guid>{Url}{item.Id}</guid>");
-			//pubdate
-			sb.AppendLine($"<description>{item.Title}</description>\r\n</item>\r\n");
+			//pubdate?
+			sb.AppendLine($"<description>{description}</description>\r\n</item>\r\n");
 		}
 		sb.AppendLine("</channel>\r\n</rss>");
 		return sb.ToString();
@@ -227,6 +355,7 @@ public abstract class Rss
 public class Item
 {
 	public string Title { get; set; }
+	public string Description { get; set; }
 	public string Id { get; set; }
 }
 
@@ -252,6 +381,10 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, TraceW
 	else if( type == "ao3a" )
 	{
 		rssobj = new Ao3AuthorRss(id,log);
+	}
+	else if( type == "sv" )
+	{
+		rssobj = new ShareVilleRss(id,log);
 	}
 	else
 	{
