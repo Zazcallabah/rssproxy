@@ -73,9 +73,11 @@ public class ShareVilleRss : Rss
 	
 	static Dictionary<int,string> TagTypes = new Dictionary<int,string>{
 		{0,""},
+		{1,""},//?
 		{2,""},
 		{3,"utan särskild tidshorisont"},
 		{4,"för att ta hem vinsten"},
+		{5,"för att omplacera till något bättre"},
 		{6,"för att lägga pengarna i kassan"}
 	};
 	
