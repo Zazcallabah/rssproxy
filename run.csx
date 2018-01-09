@@ -64,11 +64,14 @@ public class ShareVilleRss : Rss
 	{
 		public string name { get; set; }
 	}
+
+    string _displayUrl;
 	
 	public ShareVilleRss(string id, TraceWriter log) : base(log)
 	{
 		Id = id;
 		Url = $"https://www.shareville.se/api/v1/profiles/{Id}";
+        _displayUrl = $"https://www.shareville.se/medlemmar/{Id}/feed";
 	}
 	
 	static Dictionary<int,string> TagTypes = new Dictionary<int,string>{
@@ -122,6 +125,7 @@ public class ShareVilleRss : Rss
 				Description = comment
 			});
 		}
+        Url = _displayUrl;
 		return list;
 	}
 
